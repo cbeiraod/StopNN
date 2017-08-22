@@ -10,16 +10,14 @@ from sklearn.preprocessing import StandardScaler
 from keras.models import Sequential
 from keras.layers import Dense, Dropout, AlphaDropout
 from keras.optimizers import Adam
+from keras.callbacks import EarlyStopping
 from sklearn.metrics import confusion_matrix, cohen_kappa_score
 from scipy.stats import ks_2samp
 import matplotlib.pyplot as plt
-
 import localConfig as cfg
 
-
-
 treeName = "bdttree"
-baseSigName = "T2DegStop_300_270"
+baseSigName = "T2DegStop_550_520"
 bkgDatasets = [
                 "Wjets_70to100",
                 "Wjets_100to200",
@@ -42,7 +40,7 @@ bkgDatasets = [
 
               ]
 
-myFeatures = ["LepPt", "LepEta", "LepChg", "Met", "Jet1Pt", "HT", "NbLoose", "Njet", "JetHBpt", "DrJetHBLep", "JetHBCSV"]
+myFeatures = ["LepPt", "LepEta", "LepChg", "Met", "Jet1Pt", "HT"] #, "NbLoose", "Njet", "JetHBpt", "DrJetHBLep", "JetHBCSV"
 inputBranches = list(myFeatures)
 inputBranches.append("XS")
 inputBranches.append("weight")
@@ -106,11 +104,6 @@ sigDataDev["sampleWeight"] = 1
 sigDataVal["sampleWeight"] = 1
 bkgDataDev["sampleWeight"] = 1
 bkgDataVal["sampleWeight"] = 1
-
-
-
-
-
 
 # Calculate event weights
 # The input files already have a branch called weight, which contains the per-event weights
@@ -183,145 +176,167 @@ learning_rate = 0.001/5.0
 myAdam = Adam(lr=learning_rate)
 compileArgs['optimizer'] = myAdam
 
-def getDefinedClassifier(nIn, nOut, compileArgs):
-  model = Sequential()
-  model.add(Dense(16, input_dim=nIn, kernel_initializer='he_normal', activation='relu'))
-  #model.add(Dropout(0.2))
-  model.add(Dense(10, kernel_initializer='he_normal', activation='relu'))
-  #model.add(Dropout(0.2))
-  model.add(Dense(nOut, activation="sigmoid", kernel_initializer='glorot_normal'))
-  model.compile(**compileArgs)
-  return model
-
-def getSELUClassifier(nIn, nOut, compileArgs):
-  model = Sequential()
-  model.add(Dense(16, input_dim=nIn, kernel_initializer='he_normal', activation='selu'))
-  model.add(AlphaDropout(0.2))
-  model.add(Dense(32, kernel_initializer='he_normal', activation='selu'))
-  model.add(AlphaDropout(0.2))
-  model.add(Dense(32, kernel_initializer='he_normal', activation='selu'))
-  model.add(AlphaDropout(0.2))
-  model.add(Dense(32, kernel_initializer='he_normal', activation='selu'))
-  model.add(AlphaDropout(0.2))
-  model.add(Dense(nOut, activation="sigmoid", kernel_initializer='glorot_normal'))
-  model.compile(**compileArgs)
-  return model
-
-print type(XVal)
-print XVal.shape
-print XVal.dtype
-
-print("Starting the training")
-start = time.time()
-model = getDefinedClassifier(len(trainFeatures), 1, compileArgs)
-#model = getSELUClassifier(len(trainFeatures), 1, compileArgs)
-history = model.fit(XDev, YDev, validation_data=(XVal,YVal,weightVal), sample_weight=weightDev, **trainParams)
-print("Training took ", time.time()-start, " seconds")
-
-name = "myNN2"
-model.save(name+".h5")
-model_json = model.to_json()
-with open(name + ".json", "w") as json_file:
-  json_file.write(model_json)
-model.save_weights(name + ".h5")
-
-## To load:
-#from keras.models import model_from_json
-#with open('model.json', 'r') as json_file:
-#  loaded_model_json = json_file.read()
-#loaded_model = model_from_json(loaded_model_json)
-#loaded_model.load_weights("model.h5")
-
-print("Getting predictions")
-devPredict = model.predict(XDev)
-valPredict = model.predict(XVal)
-
-print("Getting scores")
-
-scoreDev = model.evaluate(XDev, YDev, sample_weight=weightDev, verbose = 1)
-scoreVal = model.evaluate(XVal, YVal, sample_weight=weightVal, verbose = 1)
-print ""
-
-print "Dev score:", scoreDev
-print "Val score:", scoreVal
-print confusion_matrix(YVal, valPredict.round())
-cohen_kappa=cohen_kappa_score(YVal, valPredict.round())
-print cohen_kappa_score(YVal, valPredict.round())
-
-
-print "Calculating FOM:"
-dataVal["NN"] = valPredict
-dataDev["NN"] = devPredict
-
-sig_dataValIdx=(dataVal.category==1)
-bkg_dataValIdx=(dataVal.category==0)
-sig_dataDevIdx=(dataVal.category==1)
-bkg_dataDevIdx=(dataVal.category==0)
-
-sig_dataVal=dataVal[sig_dataValIdx]
-bkg_dataVal=dataVal[bkg_dataValIdx]
-sig_dataDev=dataDev[sig_dataDevIdx]
-bkg_dataDev=dataDev[bkg_dataDevIdx]
-
-def getYields(dataVal, cut=0.5, luminosity=35866, splitFactor=2):
-  selectedValIdx = (dataVal.NN>cut)
-  selectedVal = dataVal[selectedValIdx]
-
-  selectedSigIdx = (selectedVal.category == 1)
-  selectedBkgIdx = (selectedVal.category == 0)
-  selectedSig = selectedVal[selectedSigIdx]
-  selectedBkg = selectedVal[selectedBkgIdx]
-
-  sigYield = selectedSig.weight.sum()
-  sigYieldUnc = np.sqrt(np.sum(np.square(selectedSig.weight)))
-  bkgYield = selectedBkg.weight.sum()
-  bkgYieldUnc = np.sqrt(np.sum(np.square(selectedBkg.weight)))
-
-  sigYield = sigYield * luminosity * splitFactor # The factor 2 comes from the splitting
-  sigYieldUnc = sigYieldUnc * luminosity * splitFactor
-  bkgYield = bkgYield * luminosity * splitFactor
-  bkgYieldUnc = bkgYieldUnc * luminosity * splitFactor
-
-  return ((sigYield, sigYieldUnc), (bkgYield, bkgYieldUnc))
-
-tmpSig, tmpBkg = getYields(dataVal)
-sigYield, sigYieldUnc = tmpSig
-bkgYield, bkgYieldUnc = tmpBkg
-
-print "Signal@Presel:", sigDataVal.weight.sum() * 35866 * 2
-print "Background@Presel:", bkgDataVal.weight.sum() * 35866 * 2
-print "Signal:", sigYield, "+-", sigYieldUnc
-print "Background:", bkgYield, "+-", bkgYieldUnc
-
+## DEFINITIONS
 def FOM1(sIn, bIn):
-  s, sErr = sIn
-  b, bErr = bIn
-  fom = s / (b**0.5)
-  fomErr = ((sErr / (b**0.5))**2+(bErr*s / (2*(b)**(1.5)) )**2)**0.5
-  return (fom, fomErr)
+    s, sErr = sIn
+    b, bErr = bIn
+    fom = s / (b**0.5)
+    fomErr = ((sErr / (b**0.5))**2+(bErr*s / (2*(b)**(1.5)) )**2)**0.5
+    return (fom, fomErr)
 
 def FOM2(sIn, bIn):
-  s, sErr = sIn
-  b, bErr = bIn
-  fom = s / ((s+b)**0.5)
-  fomErr = ((sErr*(2*b + s)/(2*(b + s)**1.5))**2  +  (bErr * s / (2*(b + s)**1.5))**2)**0.5
-  return (fom, fomErr)
+    s, sErr = sIn
+    b, bErr = bIn
+    fom = s / ((s+b)**0.5)
+    fomErr = ((sErr*(2*b + s)/(2*(b + s)**1.5))**2  +  (bErr * s / (2*(b + s)**1.5))**2)**0.5
+    return (fom, fomErr)
 
 def FullFOM(sIn, bIn, fValue=0.2):
-  from math import log
-  s, sErr = sIn
-  b, bErr = bIn
-  fomErr = 0.0 # Add the computation of the uncertainty later
-  fomA = 2*(s+b)*log(((s+b)*(b + (fValue*b)**2))/(b**2 + (s + b) * (fValue*b)**2))
-  fomB = log(1 + (s*b*b*fValue*fValue)/(b*(b+(fValue*b)**2)))/(fValue**2)
-  fom = (fomA - fomB)**0.5
-  return (fom, fomErr)
+    from math import log
+    s, sErr = sIn
+    b, bErr = bIn
+    fomErr = 0.0 # Add the computation of the uncertainty later
+    fomA = 2*(s+b)*log(((s+b)*(b + (fValue*b)**2))/(b**2 + (s + b) * (fValue*b)**2))
+    fomB = log(1 + (s*b*b*fValue*fValue)/(b*(b+(fValue*b)**2)))/(fValue**2)
+    fom = (fomA - fomB)**0.5
+    return (fom, fomErr)
 
-print "Basic FOM (s/SQRT(b)):", FOM1((sigYield, sigYieldUnc), (bkgYield, bkgYieldUnc))
-print "Basic FOM (s/SQRT(s+b)):", FOM2((sigYield, sigYieldUnc), (bkgYield, bkgYieldUnc))
-print "Full FOM:", FullFOM((sigYield, sigYieldUnc), (bkgYield, bkgYieldUnc))
+number_of_neurons_all=[]
+max_FOM_all=[]
+FOM_cut_all=[]
+cohen_kappa_score_all=[]
+KS_test_all=[]
 
-import sys
+
+for x in number_of_neurons_all:
+    print x, "  ", max_FOM_all[number_of_neurons_all.index(x)], "  ", FOM_cut_all[number_of_neurons_all.index(x)], "  ", cohen_kappa_score_all[number_of_neurons_all.index(x)], "   ", KS_test_all[number_of_neurons_all.index(x)]
+
+
+for x in range(7,8):
+    print "======> NUMBER OF NEURONS", x
+    number_of_neurons_all.append(x)
+    def getDefinedClassifier(nIn, nOut, compileArgs):
+        model = Sequential()
+        model.add(Dense(x, input_dim=nIn, kernel_initializer='he_normal', activation='relu'))
+        #model.add(Dropout(0.2))
+        #model.add(Dense(10, kernel_initializer='he_normal', activation='relu'))
+        #model.add(Dropout(0.2))
+        model.add(Dense(nOut, activation="sigmoid", kernel_initializer='glorot_normal'))
+        model.compile(**compileArgs)
+        return model
+        
+    """
+    def getSELUClassifier(nIn, nOut, compileArgs):
+        model = Sequential()
+        model.add(Dense(16, input_dim=nIn, kernel_initializer='he_normal', activation='selu'))
+        model.add(AlphaDropout(0.2))
+        model.add(Dense(32, kernel_initializer='he_normal', activation='selu'))
+        model.add(AlphaDropout(0.2))
+        model.add(Dense(32, kernel_initializer='he_normal', activation='selu'))
+        model.add(AlphaDropout(0.2))
+        model.add(Dense(32, kernel_initializer='he_normal', activation='selu'))
+        model.add(AlphaDropout(0.2))
+        model.add(Dense(nOut, activation="sigmoid", kernel_initializer='glorot_normal'))
+        model.compile(**compileArgs)      
+        return model
+    """
+    #print type(XVal)
+    #print XVal.shape
+    #print XVal.dtype
+
+    call = keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=1e-7, patience=5, verbose=1, mode='auto')
+    print("Starting the training")
+    start = time.time()
+    model = getDefinedClassifier(len(trainFeatures), 1, compileArgs)
+    #model = getSELUClassifier(len(trainFeatures), 1, compileArgs)
+    history = model.fit(XDev, YDev, validation_data=(XVal,YVal,weightVal), sample_weight=weightDev, callbacks=[call], **trainParams)
+    print("Training took ", time.time()-start, " seconds")
+
+    name = "myNN_4_"+str(x)
+    model.save(name+".h5")
+    model_json = model.to_json()
+    with open(name + ".json", "w") as json_file:
+        json_file.write(model_json)
+        model.save_weights(name + ".h5")
+        
+    ## To load:
+    #from keras.models import model_from_json
+    #with open('model.json', 'r') as json_file:
+    #  loaded_model_json = json_file.read()
+    #loaded_model = model_from_json(loaded_model_json)
+    #loaded_model.load_weights("model.h5")
+
+    print("Getting predictions")
+    devPredict = model.predict(XDev)
+    valPredict = model.predict(XVal)
+
+    print("Getting scores")
+
+    scoreDev = model.evaluate(XDev, YDev, sample_weight=weightDev, verbose = 1)
+    scoreVal = model.evaluate(XVal, YVal, sample_weight=weightVal, verbose = 1)
+    print ""
+
+    print "Dev score:", scoreDev
+    print "Val score:", scoreVal
+    print confusion_matrix(YVal, valPredict.round()) 
+    cohen_kappa=cohen_kappa_score(YVal, valPredict.round())
+    cohen_kappa_score_all.append(cohen_kappa)
+    print cohen_kappa_score(YVal, valPredict.round())
+
+
+    print "Calculating FOM:"
+    dataVal["NN"] = valPredict
+    dataDev["NN"] = devPredict
+
+    sig_dataValIdx=(dataVal.category==1)
+    bkg_dataValIdx=(dataVal.category==0)
+    sig_dataDevIdx=(dataVal.category==1)
+    bkg_dataDevIdx=(dataVal.category==0)
+
+    sig_dataVal=dataVal[sig_dataValIdx]
+    bkg_dataVal=dataVal[bkg_dataValIdx]
+    sig_dataDev=dataDev[sig_dataDevIdx]
+    bkg_dataDev=dataDev[bkg_dataDevIdx]
+
+    def getYields(dataVal, cut=0.5, luminosity=35866, splitFactor=2):
+        selectedValIdx = (dataVal.NN>cut)
+        selectedVal = dataVal[selectedValIdx]
+
+        selectedSigIdx = (selectedVal.category == 1)
+        selectedBkgIdx = (selectedVal.category == 0)
+        selectedSig = selectedVal[selectedSigIdx]
+        selectedBkg = selectedVal[selectedBkgIdx]
+
+
+        print len(selectedSig)
+        print len(selectedBkg)
+
+        sigYield = selectedSig.weight.sum()
+        sigYieldUnc = np.sqrt(np.sum(np.square(selectedSig.weight)))
+        bkgYield = selectedBkg.weight.sum()
+        bkgYieldUnc = np.sqrt(np.sum(np.square(selectedBkg.weight)))
+
+        sigYield = sigYield * luminosity * splitFactor # The factor 2 comes from the splitting
+        sigYieldUnc = sigYieldUnc * luminosity * splitFactor
+        bkgYield = bkgYield * luminosity * splitFactor
+        bkgYieldUnc = bkgYieldUnc * luminosity * splitFactor
+
+        return ((sigYield, sigYieldUnc), (bkgYield, bkgYieldUnc))
+
+    tmpSig, tmpBkg = getYields(dataVal)
+    sigYield, sigYieldUnc = tmpSig
+    bkgYield, bkgYieldUnc = tmpBkg
+
+    #print "Signal@Presel:", sigDataVal.weight.sum() * 35866 * 2
+    #print "Background@Presel:", bkgDataVal.weight.sum() * 35866 * 2
+    #print "Signal:", sigYield, "+-", sigYieldUnc
+    #print "Background:", bkgYield, "+-", bkgYieldUnc
+
+    #print "Basic FOM (s/SQRT(b)):", FOM1((sigYield, sigYieldUnc), (bkgYield, bkgYieldUnc))
+    #print "Basic FOM (s/SQRT(s+b)):", FOM2((sigYield, sigYieldUnc), (bkgYield, bkgYieldUnc))
+    #print "Full FOM:", FullFOM((sigYield, sigYieldUnc), (bkgYield, bkgYieldUnc))
+
+    import sys
 #sys.exit("Done!")
 
 #########################################################
@@ -330,42 +345,50 @@ import sys
 
 
 #history = model.fit(XDev, YDev, validation_data=(XVal,YVal,weightVal), sample_weight=weightDev, **trainParams)
-print(history.history.keys())
+    print(history.history.keys())
 
-fomEvo = []
-fomCut = []
+    fomEvo = []
+    fomCut = []
 
-bkgEff = []
-sigEff = []
+    bkgEff = []
+    sigEff = []
 
-luminosity=35866
-sig_Init = sigDataVal.weight.sum() * luminosity * 2;
-bkg_Init = bkgDataVal.weight.sum() * luminosity * 2;
+    luminosity=35866
+    sig_Init = sigDataVal.weight.sum() * luminosity * 2;
+    bkg_Init = bkgDataVal.weight.sum() * luminosity * 2;
 
-for cut in np.arange(0.0, 0.9999999, 0.001):
-  sig, bkg = getYields(dataVal, cut=cut, luminosity=luminosity)
-  if sig[0] > 0 and bkg[0] > 0:
-    fom, fomUnc = FullFOM(sig, bkg)
-    fomEvo.append(fom)
-    fomCut.append(cut)
-    bkgEff.append(bkg[0]/bkg_Init)
-    sigEff.append(sig[0]/sig_Init)
+    for cut in np.arange(0.0, 0.9999999, 0.001):
+        print cut
+        sig, bkg = getYields(dataVal, cut=cut, luminosity=luminosity)
+        if sig[0] > 0 and bkg[0] > 0:
+            fom, fomUnc = FullFOM(sig, bkg)
+            fomEvo.append(fom)
+            print fom
+            print ""
+            fomCut.append(cut)
+            bkgEff.append(bkg[0]/bkg_Init)
+            sigEff.append(sig[0]/sig_Init)
 
-max_FOM=0
+    max_FOM=0
 
-print "Maximizing FOM"
-for x in fomEvo:
-    if x>max_FOM:
-        max_FOM=x
+    print "Maximizing FOM"
+    for x in fomEvo:
+        if x>max_FOM:
+            max_FOM=x
 
+    max_FOM_all.append(max_FOM)
+    FOM_cut_all.append(fomCut[fomEvo.index(max_FOM)])
 
-print "FOM maximization: ", max_FOM , "with cut at: " , fomCut[fomEvo.index(max_FOM)]
-Eff = zip(bkgEff, sigEff)
+    print "FOM maximization: ", max_FOM , "with cut at: " , fomCut[fomEvo.index(max_FOM)]
+    Eff = zip(bkgEff, sigEff)
 
-print "Kolmogorov-Smirnov test"
-km_value=ks_2samp((sig_dataDev["NN"].append(bkg_dataDev["NN"])),(sig_dataVal["NN"].append(bkg_dataVal["NN"])))
-print km_value
+    print "Kolmogorov-Smirnov test"
+    km_value=ks_2samp((sig_dataDev["NN"].append(bkg_dataDev["NN"])),(sig_dataVal["NN"].append(bkg_dataVal["NN"])))
+    print km_value
+    KS_test_all.append(km_value)
+                    
 
+"""
 print "Plotting"
 
 plt.figure(figsize=(7,6))
@@ -434,6 +457,16 @@ plt.xlabel("ND")
 plt.legend(['Background', 'Signal'], loc='upper left')
 plt.savefig('FOM2.png', bbox_inches='tight')
 plt.show()
+
+"""
+for x in number_of_neurons_all:
+    print "4"
+    print x
+    print cohen_kappa_score_all[number_of_neurons_all.index(x)]
+    print max_FOM_all[number_of_neurons_all.index(x)]
+    print FOM_cut_all[number_of_neurons_all.index(x)]
+    print KS_test_all[number_of_neurons_all.index(x)][0]
+    print KS_test_all[number_of_neurons_all.index(x)][1]
 
 
 sys.exit("Done!")
