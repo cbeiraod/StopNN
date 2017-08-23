@@ -1,3 +1,5 @@
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL']='2'
 import root_numpy
 import numpy as np
 import pandas
@@ -12,87 +14,14 @@ from sklearn.metrics import confusion_matrix, cohen_kappa_score
 from scipy.stats import ks_2samp
 import matplotlib.pyplot as plt
 import localConfig as cfg
-from commonFunctions import StopDataLoader
-from commonFunctions import StopNNGraphics
+from commonFunctions import StopDataLoader, FOM1, FOM2, FullFOM, getYields
 import sys
-from math import log
+
 from keras.models import model_from_json
 
-myFeatures = ["LepPt", "LepEta", "LepChg", "Met", "Jet1Pt", "HT", "NbLoose", "Njet", "JetHBpt", "DrJetHBLep", "JetHBCSV", "mt"]
-inputBranches = list(myFeatures)
-inputBranches.append("XS")
-inputBranches.append("weight")
-preselection = "(DPhiJet1Jet2 < 2.5 || Jet2Pt < 60) && (Met > 280) && (HT > 200) && (isTight == 1) && (Jet1Pt > 110)"
-suffix = "_skimmed"
-luminosity = 35866
-number_of_events_print = 0
-test_point = "550_520"
-train_DM = "DM30"
-model_name = "myNN_test_2_15_DM30"
+from prepareDATA import *
 
-print "Loading datasets..."
-dataDev, dataVal = StopDataLoader(cfg.loc, inputBranches, selection=preselection, suffix=suffix, signal=train_DM, test=test_point)
-     
-if number_of_events_print == 1:
-    np_dataDev, np_dataVal = StopDataLoader(cfg.loc, inputBranches, suffix=suffix, signal=train_DM, test=test_point) #
-    print " ==> BEFORE PRE-SELECTION:"        
-    print "     Train Signal Events:", len(np_dataDev[np_dataDev.category==1])
-    print "     Train Background Events:",len(np_dataDev[np_dataDev.category==0])
-    print "     Test Signal Events:", len(np_dataVal[np_dataVal.category==1])
-    print "     Test Background Events:", len(np_dataVal[np_dataVal.category==0])        
-    print ""
-    print " ==> AFTER PRE-SELECTION:"        
-    print "     Train Signal Events:", len(dataDev[dataDev.category==1])
-    print "     Train Background Events:",len(dataDev[dataDev.category==0])
-    print "     Test Signal Events:", len(dataVal[dataVal.category==1])
-    print "     Test Background Events:", len(dataVal[dataVal.category==0])
-
-data = dataDev.copy()
-data = data.append(dataVal.copy(), ignore_index=True)
-
-print 'Finding features of interest'
-trainFeatures = [var for var in data.columns if var in myFeatures]
-otherFeatures = [var for var in data.columns if var not in trainFeatures]
-
-print "Preparing the data for the NN"
-XDev = dataDev.ix[:,0:len(trainFeatures)] #    PORQUe X E Y??? EQUIVALENTE A SIG E BACK?
-XVal = dataVal.ix[:,0:len(trainFeatures)]
-YDev = np.ravel(dataDev.category)
-YVal = np.ravel(dataVal.category)
-weightDev = np.ravel(dataDev.sampleWeight)
-weightVal = np.ravel(dataVal.sampleWeight)
-
-print("Fitting the scaler and scaling the input variables")
-scaler = StandardScaler().fit(XDev)
-XDev = scaler.transform(XDev)
-XVal = scaler.transform(XVal)
-
-scalerfile = 'scaler_'+train_DM+'.sav'
-joblib.dump(scaler, scalerfile)
-
-## DEFINITIONS
-def FOM1(sIn, bIn):
-    s, sErr = sIn
-    b, bErr = bIn
-    fom = s / (b**0.5)
-    fomErr = ((sErr / (b**0.5))**2+(bErr*s / (2*(b)**(1.5)) )**2)**0.5
-    return (fom, fomErr)
-
-def FOM2(sIn, bIn):
-    s, sErr = sIn
-    b, bErr = bIn
-    fom = s / ((s+b)**0.5)
-    fomErr = ((sErr*(2*b + s)/(2*(b + s)**1.5))**2  +  (bErr * s / (2*(b + s)**1.5))**2)**0.5
-    return (fom, fomErr)
-
-def FullFOM(sIn, bIn, fValue=0.2):
-    s, sErr = sIn
-    b, bErr = bIn
-    fomErr = 0.0 # Add the computation of the uncertainty later
-    fomA = 2*(s+b)*log(((s+b)*(b + (fValue*b)**2))/(b**2 + (s + b) * (fValue*b)**2))
-    fomB = log(1 + (s*b*b*fValue*fValue)/(b*(b+(fValue*b)**2)))/(fValue**2)
-    fom = (fomA - fomB)**0.5
-    return (fom, fomErr)
+model_name = "myNN_DM30"
 
 print "Loading Model ..."
 with open(model_name+'.json', 'r') as json_file:
@@ -100,8 +29,7 @@ with open(model_name+'.json', 'r') as json_file:
 model = model_from_json(loaded_model_json)
 model.load_weights(model_name+".h5")
 model.compile(loss = 'binary_crossentropy', optimizer = 'adam')
-        
-        
+
 print("Getting predictions")
 devPredict = model.predict(XDev)
 valPredict = model.predict(XVal)
@@ -113,38 +41,15 @@ scoreDev = model.evaluate(XDev, YDev, sample_weight=weightDev, verbose = 1)
 scoreVal = model.evaluate(XVal, YVal, sample_weight=weightVal, verbose = 1)
 print ""
 cohen_kappa=cohen_kappa_score(YVal, valPredict.round())
-
-        
+   
 print "Calculating parameters"
 dataDev["NN"] = devPredict
-dataVal["NN"] = valPredict
-        
+dataVal["NN"] = valPredict  
 
 sig_dataDev=dataDev[dataDev.category==1]
 bkg_dataDev=dataDev[dataDev.category==0]
 sig_dataVal=dataVal[dataVal.category==1]
 bkg_dataVal=dataVal[dataVal.category==0]
-
-        
-def getYields(dataVal, cut=0.5, luminosity=35866, splitFactor=2):
-    #defines the selected test data 
-    selectedVal = dataVal[dataVal.NN>cut]
-            
-    #separates the true positives from false negatives
-    selectedSig = selectedVal[selectedVal.category == 1]
-    selectedBkg = selectedVal[selectedVal.category == 0]
-            
-    sigYield = selectedSig.weight.sum()
-    sigYieldUnc = np.sqrt(np.sum(np.square(selectedSig.weight)))
-    bkgYield = selectedBkg.weight.sum()
-    bkgYieldUnc = np.sqrt(np.sum(np.square(selectedBkg.weight)))
-
-    sigYield = sigYield * luminosity * splitFactor          #The factor 2 comes from the splitting
-    sigYieldUnc = sigYieldUnc * luminosity * splitFactor
-    bkgYield = bkgYield * luminosity * splitFactor
-    bkgYieldUnc = bkgYieldUnc * luminosity * splitFactor
-
-    return ((sigYield, sigYieldUnc), (bkgYield, bkgYieldUnc))
 
 tmpSig, tmpBkg = getYields(dataVal)
 sigYield, sigYieldUnc = tmpSig
@@ -223,7 +128,7 @@ plt.suptitle("MVA overtraining check for classifier: NN", fontsize=13, fontweigh
 plt.title("Cohen's kappa: {0}\nKolmogorov Smirnov test: {1}".format(cohen_kappa, km_value[1]), fontsize=10)
 plt.legend(['Signal (Test sample)', 'Background (Test sample)', 'Signal (Train sample)', 'Background (Train sample)\nasdfgh'], loc='upper right')
 plt.savefig('hist_'+model_name+'.png', bbox_inches='tight')
-#plt.show()
+plt.show()
 
 
 both_dataDev=bkg_dataDev.append(sig_dataDev)
@@ -235,7 +140,7 @@ plt.legend(['Background + Signal (test sample)', 'Background (test sample)'], lo
 plt.hist(bkg_dataDev["NN"], 50, facecolor='red', weights=bkg_dataDev["weight"])
 plt.hist(both_dataDev["NN"], 50, color="blue", histtype="step", weights=both_dataDev["weight"])
 plt.savefig('pred_'+model_name+'.png', bbox_inches='tight')
-#plt.show()
+plt.show()
         
 plt.figure(figsize=(7,6))
 plt.subplots_adjust(hspace=0.5)
@@ -256,6 +161,6 @@ plt.ylabel("Eff")
 plt.xlabel("ND")
 plt.legend(['Background', 'Signal'], loc='upper left')
 plt.savefig('FOM_'+model_name+'.png', bbox_inches='tight')
-#plt.show()
+plt.show()
          
 sys.exit("Done!")
