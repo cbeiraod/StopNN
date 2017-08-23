@@ -4,4 +4,10 @@ keras-tf/*
 *.pcm
 *.root
 *.h5
+*.png
+*.json
+*.pyc
+*.txt
+*.sav
 scaler.sav
+localConfig.py
