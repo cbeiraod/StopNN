@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from mpl_toolkits.mplot3d import Axes3D
 
-f = open('trainingDATA.txt', 'r')
+f = open('DATA_loop_test_trash_550_520.txt', 'r')
 
 layers = []
 neurons = []

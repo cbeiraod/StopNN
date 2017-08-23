@@ -159,7 +159,6 @@ def StopDataLoader(path, features, test="550_520", selection="", treename="bdttr
   dev = dev.append(bkgDev.copy(), ignore_index=True)
   val = sigVal.copy()
   val = val.append(bkgVal.copy(), ignore_index=True)
-
   return dev, val
   
 def FOM1(sIn, bIn):

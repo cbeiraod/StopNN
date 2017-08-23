@@ -13,9 +13,9 @@ from commonFunctions import getYields, FullFOM
 
 from prepareDATA import *
 
-n_neurons = 10
+n_neurons = 13
 n_layers = 2
-n_epochs = 2 
+n_epochs = 25 
 name = "myNN_N"+str(n_neurons)+"_L"+str(n_layers)+"_E"+str(n_epochs)+"_Dev"+train_DM+"_Val"+test_point
 
 compileArgs = {'loss': 'binary_crossentropy', 'optimizer': 'adam', 'metrics': ["accuracy"]}
