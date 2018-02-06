@@ -1,3 +1,9 @@
+'''
+Apply a Neural Network to a specific dataset. Using "filesToProcess" and "myFeatures" as features to be trained on.
+
+Note: Used in the beginng of the project to get the handle of NN
+'''
+
 from keras.models import load_model
 import ROOT
 import numpy as np
